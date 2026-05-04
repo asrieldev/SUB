@@ -30,7 +30,8 @@ data class ExpenseEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val amount: Double,
-    val category: String = "General"
+    val category: String = "General",
+    val createdAtMillis: Long = System.currentTimeMillis()
 )
 
 @Entity(tableName = "incomes")
@@ -68,7 +69,7 @@ interface ReminderDao {
 
 @Dao
 interface ExpenseDao {
-    @Query("SELECT * FROM expenses ORDER BY id ASC")
+    @Query("SELECT * FROM expenses ORDER BY createdAtMillis DESC")
     fun getAll(): List<ExpenseEntity>
 
     @Query("DELETE FROM expenses")
@@ -92,7 +93,7 @@ interface IncomeDao {
 
 @Database(
     entities = [ScheduleEntity::class, ReminderEntity::class, ExpenseEntity::class, IncomeEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

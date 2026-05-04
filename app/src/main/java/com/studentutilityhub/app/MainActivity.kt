@@ -352,29 +352,13 @@ class MainActivity : Activity() {
         parent.addView(actionButton("Add income") { addIncomeDialog() })
         parent.addView(actionButton("Set starting balance") { setBalanceDialog() })
         parent.addView(financeChartsCard())
-        parent.addView(sectionTitle("Income history"))
-        if (incomes.isEmpty()) {
-            parent.addView(emptyStateCard("No income yet", "Add allowance, salary, scholarship, or another income source.", "Add income") { addIncomeDialog() })
+        parent.addView(sectionTitle("Transactions"))
+        val transactions = transactions()
+        if (transactions.isEmpty()) {
+            parent.addView(emptyStateCard("No transactions yet", "Add income or an expense to start your timeline.", "Add income") { addIncomeDialog() })
         }
-        incomes.forEachIndexed { index, income ->
-            parent.addView(editableItemCard(
-                title = "${income.type} - ${money(income.amount)}\n${income.note.ifBlank { dateFormat.format(Date(income.createdAtMillis)) }}",
-                label = "Income",
-                onEdit = { editIncomeDialog(index) },
-                onDelete = { confirmDelete("Delete income?", income.type) { deleteIncome(index) } }
-            ))
-        }
-        parent.addView(sectionTitle("Expenses"))
-        if (expenses.isEmpty()) {
-            parent.addView(emptyStateCard("No expenses yet", "Track your first cost by choosing a category.", "Add expense") { addExpenseDialog() })
-        }
-        expenses.forEachIndexed { index, expense ->
-            parent.addView(editableItemCard(
-                title = "${expense.name} - ${money(expense.amount)}\n${expense.category}",
-                label = "Transaction",
-                onEdit = { editExpenseDialog(index) },
-                onDelete = { confirmDelete("Delete expense?", expense.name) { deleteExpense(index) } }
-            ))
+        transactions.forEach { transaction ->
+            parent.addView(transactionCard(transaction))
         }
     }
 
@@ -712,8 +696,22 @@ class MainActivity : Activity() {
             hint = "Amount, e.g. 4.50"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
+        val date = TextView(this).apply {
+            text = "Date: ${dateFormat.format(Date(System.currentTimeMillis()))}"
+            textSize = 14f
+            setTextColor(fg())
+            setPadding(0, dp(10), 0, dp(4))
+        }
+        var selectedDateMillis = startOfDay(System.currentTimeMillis())
+        date.setOnClickListener {
+            pickDate(selectedDateMillis) {
+                selectedDateMillis = it
+                date.text = "Date: ${dateFormat.format(Date(it))}"
+            }
+        }
         layout.addView(name)
         layout.addView(category)
+        layout.addView(date)
         layout.addView(amount)
         AlertDialog.Builder(this)
             .setTitle("Add expense")
@@ -721,7 +719,7 @@ class MainActivity : Activity() {
             .setPositiveButton("Save") { _, _ ->
                 val parsed = amount.text.toString().toDoubleOrNull()
                 if (name.text.isNotBlank() && parsed != null) {
-                    expenses.add(Expense(name.text.toString(), parsed, selectedSpinnerValue(category, "General")))
+                    expenses.add(Expense(name.text.toString(), parsed, selectedSpinnerValue(category, "General"), selectedDateMillis))
                     saveState()
                     render()
                 }
@@ -746,8 +744,22 @@ class MainActivity : Activity() {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             setText(expense.amount.toString())
         }
+        val date = TextView(this).apply {
+            text = "Date: ${dateFormat.format(Date(expense.createdAtMillis))}"
+            textSize = 14f
+            setTextColor(fg())
+            setPadding(0, dp(10), 0, dp(4))
+        }
+        var selectedDateMillis = expense.createdAtMillis
+        date.setOnClickListener {
+            pickDate(selectedDateMillis) {
+                selectedDateMillis = it
+                date.text = "Date: ${dateFormat.format(Date(it))}"
+            }
+        }
         layout.addView(name)
         layout.addView(category)
+        layout.addView(date)
         layout.addView(amount)
         AlertDialog.Builder(this)
             .setTitle("Edit expense")
@@ -755,7 +767,7 @@ class MainActivity : Activity() {
             .setPositiveButton("Save") { _, _ ->
                 val parsed = amount.text.toString().toDoubleOrNull()
                 if (name.text.isNotBlank() && parsed != null) {
-                    expenses[index] = Expense(name.text.toString(), parsed, selectedSpinnerValue(category, "General"))
+                    expenses[index] = Expense(name.text.toString(), parsed, selectedSpinnerValue(category, "General"), selectedDateMillis)
                     saveState()
                     render()
                 }
@@ -845,6 +857,25 @@ class MainActivity : Activity() {
         incomes.removeAt(index)
         saveState()
         render()
+    }
+
+    private fun transactionCard(transaction: TransactionItem): View {
+        val title = "${if (transaction.kind == "Income") "+" else "-"} ${money(transaction.amount)}  ${transaction.title}"
+        val detail = "${transaction.detail}\n${dateFormat.format(Date(transaction.createdAtMillis))}"
+        return editableItemCard(
+            title = "$title\n$detail",
+            label = transaction.kind,
+            onEdit = {
+                if (transaction.kind == "Income") editIncomeDialog(transaction.index) else editExpenseDialog(transaction.index)
+            },
+            onDelete = {
+                if (transaction.kind == "Income") {
+                    confirmDelete("Delete income?", transaction.title) { deleteIncome(transaction.index) }
+                } else {
+                    confirmDelete("Delete expense?", transaction.title) { deleteExpense(transaction.index) }
+                }
+            }
+        )
     }
 
     private fun setBalanceDialog() {
@@ -1267,11 +1298,9 @@ class MainActivity : Activity() {
         val todaysReminder = reminderItems
             .filter { isSameSelectedDay(it.startTimeMillis) }
             .minByOrNull { it.startTimeMillis }
-        val recentTransaction = (incomes.map {
-            "Income: ${it.type} ${money(it.amount)}"
-        } + expenses.map {
-            "Expense: ${it.category} ${money(it.amount)}"
-        }).firstOrNull()
+        val recentTransaction = transactions().firstOrNull()?.let {
+            "${it.kind}: ${it.title} ${money(it.amount)}"
+        }
         listOf(
             Triple("Next class", nextClass?.let { "${timeFormat.format(Date(it.startTimeMillis))} ${it.title}" } ?: "Add your first class", pastelGreen()),
             Triple("Today", todaysReminder?.title ?: "No reminders today", pastelLavender()),
@@ -1783,6 +1812,32 @@ class MainActivity : Activity() {
         }.timeInMillis
     }
 
+    private fun startOfDay(timeMillis: Long): Long {
+        return Calendar.getInstance().apply {
+            this.timeInMillis = timeMillis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
+    private fun pickDate(initialMillis: Long, onSelected: (Long) -> Unit) {
+        val calendar = Calendar.getInstance().apply { timeInMillis = initialMillis }
+        DatePickerDialog(
+            this,
+            { _, year, month, day ->
+                onSelected(Calendar.getInstance().apply {
+                    set(year, month, day, 0, 0, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }.timeInMillis)
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
     private fun selectedDayLabel(): String = monthFormat.format(Date(selectedDayMillis()))
 
     private fun isSameSelectedDay(timeMillis: Long): Boolean {
@@ -1822,6 +1877,28 @@ class MainActivity : Activity() {
     private fun totalIncome(): Double = walletBalance + incomes.sumOf { it.amount }
 
     private fun currentBalance(): Double = totalIncome() - expenses.sumOf { it.amount }
+
+    private fun transactions(): List<TransactionItem> {
+        return (incomes.mapIndexed { index, income ->
+            TransactionItem(
+                kind = "Income",
+                title = income.type,
+                detail = income.note.ifBlank { "Income" },
+                amount = income.amount,
+                createdAtMillis = income.createdAtMillis,
+                index = index
+            )
+        } + expenses.mapIndexed { index, expense ->
+            TransactionItem(
+                kind = "Expense",
+                title = expense.name,
+                detail = expense.category,
+                amount = expense.amount,
+                createdAtMillis = expense.createdAtMillis,
+                index = index
+            )
+        }).sortedByDescending { it.createdAtMillis }
+    }
 
     private fun money(value: Double): String {
         return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
@@ -1966,7 +2043,7 @@ class MainActivity : Activity() {
             database.reminderDao().deleteAll()
             database.reminderDao().insertAll(reminderItems.map { ReminderEntity(it.id, it.title, it.startTimeMillis) })
             database.expenseDao().deleteAll()
-            database.expenseDao().insertAll(expenses.map { ExpenseEntity(name = it.name, amount = it.amount, category = it.category) })
+            database.expenseDao().insertAll(expenses.map { ExpenseEntity(name = it.name, amount = it.amount, category = it.category, createdAtMillis = it.createdAtMillis) })
             database.incomeDao().deleteAll()
             database.incomeDao().insertAll(incomes.map { IncomeEntity(amount = it.amount, type = it.type, note = it.note, createdAtMillis = it.createdAtMillis) })
         }
@@ -2038,14 +2115,19 @@ class MainActivity : Activity() {
         val values = JSONArray(json)
         for (index in 0 until values.length()) {
             val expense = values.getJSONObject(index)
-            expenses.add(Expense(expense.getString("name"), expense.getDouble("amount"), expense.optString("category", "General")))
+            expenses.add(Expense(
+                expense.getString("name"),
+                expense.getDouble("amount"),
+                expense.optString("category", "General"),
+                expense.optLong("createdAtMillis", System.currentTimeMillis())
+            ))
         }
     }
 
     private fun replaceExpenses(items: List<ExpenseEntity>) {
         expenses.clear()
         items.forEach {
-            expenses.add(Expense(it.name, it.amount, it.category))
+            expenses.add(Expense(it.name, it.amount, it.category, it.createdAtMillis))
         }
     }
 
@@ -2097,7 +2179,11 @@ class MainActivity : Activity() {
     private fun expensesToJson(): String {
         val json = JSONArray()
         expenses.forEach {
-            json.put(JSONObject().put("name", it.name).put("amount", it.amount).put("category", it.category))
+            json.put(JSONObject()
+                .put("name", it.name)
+                .put("amount", it.amount)
+                .put("category", it.category)
+                .put("createdAtMillis", it.createdAtMillis))
         }
         return json.toString()
     }
@@ -2161,9 +2247,11 @@ class MainActivity : Activity() {
 
     data class ReminderItem(val id: Long, val title: String, val startTimeMillis: Long)
 
-    data class Expense(val name: String, val amount: Double, val category: String = "General")
+    data class Expense(val name: String, val amount: Double, val category: String = "General", val createdAtMillis: Long = System.currentTimeMillis())
 
     data class Income(val amount: Double, val type: String = "Income", val note: String = "", val createdAtMillis: Long = System.currentTimeMillis())
+
+    data class TransactionItem(val kind: String, val title: String, val detail: String, val amount: Double, val createdAtMillis: Long, val index: Int)
 
     data class PlanTile(val title: String, val time: String, val label: String, val detail: String, val color: Int)
 
