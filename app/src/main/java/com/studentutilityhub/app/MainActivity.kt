@@ -26,6 +26,7 @@ import android.view.View
 import android.view.animation.AlphaAnimation
 import android.view.animation.AnimationSet
 import android.view.animation.ScaleAnimation
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -33,6 +34,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -44,6 +46,7 @@ import org.json.JSONObject
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Currency
 import java.util.Date
 import java.util.Locale
 
@@ -56,27 +59,14 @@ class MainActivity : Activity() {
     private val dayNameFormat = SimpleDateFormat("EEE", Locale.getDefault())
     private val dayNumberFormat = SimpleDateFormat("d", Locale.getDefault())
     private val monthFormat = SimpleDateFormat("MMMM d", Locale.getDefault())
-    private val scheduleItems = mutableListOf(
-        ScheduleItem(newItemId(), "Mobile App Development", defaultTime(9, 0)),
-        ScheduleItem(newItemId(), "Database Systems", defaultTime(11, 30)),
-        ScheduleItem(newItemId(), "French Language Practice", defaultTime(15, 0))
-    )
-    private val tasks = mutableListOf(
-        TaskItem(newItemId(), "Submit Kotlin assignment"),
-        TaskItem(newItemId(), "Prepare viva presentation"),
-        TaskItem(newItemId(), "Renew transport card")
-    )
-    private val expenses = mutableListOf(
-        Expense("Lunch", 8.50, "Food"),
-        Expense("Bus ticket", 1.80, "Transport"),
-        Expense("Printing", 3.20, "School")
-    )
-    private val reminderItems = mutableListOf(
-        ReminderItem(newItemId(), "Assignment deadline", defaultFutureTime(4, 18, 0)),
-        ReminderItem(newItemId(), "Tuition payment", defaultFutureTime(8, 10, 0)),
-        ReminderItem(newItemId(), "Campus club meeting", defaultFutureTime(2, 17, 30))
-    )
-    private var walletBalance = 450.0
+    private val expenseCategories = listOf("Food", "Transport", "School", "Rent", "Bills", "Health", "Shopping", "Entertainment", "Savings", "General")
+    private val incomeTypes = listOf("Allowance", "Salary", "Scholarship", "Part-time job", "Freelance", "Family support", "Refund", "Gift", "Other")
+    private val scheduleItems = mutableListOf<ScheduleItem>()
+    private val tasks = mutableListOf<TaskItem>()
+    private val expenses = mutableListOf<Expense>()
+    private val incomes = mutableListOf<Income>()
+    private val reminderItems = mutableListOf<ReminderItem>()
+    private var walletBalance = 0.0
     private var studentName = "Student"
     private var studentEmail = ""
     private var studentSchool = ""
@@ -84,6 +74,7 @@ class MainActivity : Activity() {
     private var studentCampus = "Campus"
     private var weatherCity = "Campus"
     private var weatherTemp = "14°C"
+    private var preferredCurrency = "EUR"
     private var selectedDayOffset = 0
     private var notificationsEnabled = true
     private var notificationLeadMinutes = 15
@@ -253,7 +244,13 @@ class MainActivity : Activity() {
                 setTypeface(null, 1)
             })
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        addView(logoImage(dp(50)))
+        addView(logoImage(dp(50)).apply {
+            contentDescription = "Profile settings"
+            setOnClickListener {
+                activeTab = "Settings"
+                render()
+            }
+        })
     }
 
     private fun content(): View = ScrollView(this).apply {
@@ -276,7 +273,7 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
         setPadding(dp(8), dp(8), dp(8), dp(8))
-        background = roundedBackground(Color.BLACK, dp(26))
+        background = roundedBackground(Color.BLACK, dp(28))
         listOf("Dashboard", "Schedule", "Expenses", "Reminders", "Services", "Settings").forEach { tab ->
             addView(Button(context).apply {
                 text = shortName(tab)
@@ -288,19 +285,27 @@ class MainActivity : Activity() {
                     activeTab = tab
                     render()
                 }
-            }, LinearLayout.LayoutParams(0, dp(52), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+            }, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            })
         }
     }.withNavMargins()
 
     private fun dashboardScreen(parent: LinearLayout) {
         parent.addView(weatherHeroCard())
         parent.addView(dateStrip())
+        parent.addView(dashboardShortcuts())
         parent.addView(metricRow())
         val selectedSchedules = scheduleItems.filter { isSameSelectedDay(it.startTimeMillis) }.sortedBy { it.startTimeMillis }
         val selectedReminders = reminderItems.filter { isSameSelectedDay(it.startTimeMillis) }.sortedBy { it.startTimeMillis }
         parent.addView(sectionTitle("Your plan"))
         if (selectedSchedules.isEmpty() && selectedReminders.isEmpty()) {
-            parent.addView(itemCard("No classes or reminders planned for ${selectedDayLabel()}.", "Plan"))
+            parent.addView(emptyStateCard(
+                title = "No plan for ${selectedDayLabel()}",
+                message = "Add your first class or reminder to shape the day.",
+                actionLabel = "Add class",
+                action = { addClassDialog() }
+            ))
         } else {
             val planTiles = selectedSchedules.map {
                 PlanTile(it.title, timeFormat.format(Date(it.startTimeMillis)), "Class", "Room / campus", pastelYellow())
@@ -319,12 +324,15 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL
         addView(metricCard("Classes", scheduleItems.size.toString(), pastelGreen()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(7), dp(10)) })
         addView(metricCard("Tasks", (tasks.size + reminderItems.size).toString(), pastelLavender()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(7), 0, dp(7), dp(10)) })
-        addView(metricCard("Balance", money(walletBalance - expenses.sumOf { it.amount }), pastelYellow()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(7), 0, 0, dp(10)) })
+        addView(metricCard("Balance", money(currentBalance()), pastelYellow()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(7), 0, 0, dp(10)) })
     }
 
     private fun scheduleScreen(parent: LinearLayout) {
         parent.addView(sectionTitle("Schedule Planner"))
         parent.addView(actionButton("Add class or study session") { addClassDialog() })
+        if (scheduleItems.isEmpty()) {
+            parent.addView(emptyStateCard("No classes yet", "Add your first class, lab, or study session.", "Add class") { addClassDialog() })
+        }
         scheduleItems.sortedBy { it.startTimeMillis }.forEach { scheduleItem ->
             val index = scheduleItems.indexOf(scheduleItem)
             parent.addView(editableItemCard(
@@ -342,9 +350,24 @@ class MainActivity : Activity() {
         parent.addView(walletCard(spent))
         parent.addView(actionButton("Add daily expense") { addExpenseDialog() })
         parent.addView(actionButton("Add income") { addIncomeDialog() })
-        parent.addView(actionButton("Set balance") { setBalanceDialog() })
-        parent.addView(spendingChartCard())
-        parent.addView(sectionTitle("Transactions"))
+        parent.addView(actionButton("Set starting balance") { setBalanceDialog() })
+        parent.addView(financeChartsCard())
+        parent.addView(sectionTitle("Income history"))
+        if (incomes.isEmpty()) {
+            parent.addView(emptyStateCard("No income yet", "Add allowance, salary, scholarship, or another income source.", "Add income") { addIncomeDialog() })
+        }
+        incomes.forEachIndexed { index, income ->
+            parent.addView(editableItemCard(
+                title = "${income.type} - ${money(income.amount)}\n${income.note.ifBlank { dateFormat.format(Date(income.createdAtMillis)) }}",
+                label = "Income",
+                onEdit = { editIncomeDialog(index) },
+                onDelete = { confirmDelete("Delete income?", income.type) { deleteIncome(index) } }
+            ))
+        }
+        parent.addView(sectionTitle("Expenses"))
+        if (expenses.isEmpty()) {
+            parent.addView(emptyStateCard("No expenses yet", "Track your first cost by choosing a category.", "Add expense") { addExpenseDialog() })
+        }
         expenses.forEachIndexed { index, expense ->
             parent.addView(editableItemCard(
                 title = "${expense.name} - ${money(expense.amount)}\n${expense.category}",
@@ -359,6 +382,9 @@ class MainActivity : Activity() {
         parent.addView(sectionTitle("Reminder System"))
         parent.addView(actionButton("Add reminder") { addReminderDialog() })
         parent.addView(actionButton("Add task") { addTaskDialog() })
+        if (reminderItems.isEmpty()) {
+            parent.addView(emptyStateCard("No reminders yet", "Create your first deadline, payment alert, or event reminder.", "Add reminder") { addReminderDialog() })
+        }
         reminderItems.sortedBy { it.startTimeMillis }.forEach { reminder ->
             val index = reminderItems.indexOf(reminder)
             parent.addView(editableItemCard(
@@ -370,6 +396,9 @@ class MainActivity : Activity() {
             ))
         }
         parent.addView(sectionTitle("Tasks"))
+        if (tasks.isEmpty()) {
+            parent.addView(emptyStateCard("No tasks yet", "Add a task and keep your study work visible.", "Add task") { addTaskDialog() })
+        }
         tasks.forEachIndexed { index, task ->
             parent.addView(editableItemCard(
                 title = "${if (task.completed) "Done: " else ""}${task.title}",
@@ -391,7 +420,7 @@ class MainActivity : Activity() {
     private fun settingsScreen(parent: LinearLayout) {
         parent.addView(sectionTitle("Settings & Personalization"))
         parent.addView(profileCard())
-        parent.addView(actionButton("Edit profile") { editProfileDialog() })
+        parent.addView(profileEditorPanel())
         parent.addView(actionButton("Log out") {
             isLoggedIn = false
             saveState()
@@ -467,7 +496,7 @@ class MainActivity : Activity() {
             setTextColor(muted())
         })
         addView(TextView(context).apply {
-            text = listOf(studentEmail, studentSchool, studentCourse, studentCampus).filter { it.isNotBlank() }.joinToString("\n")
+            text = listOf(studentEmail, studentSchool, studentCourse, studentCampus, "Currency: $preferredCurrency").filter { it.isNotBlank() }.joinToString("\n")
             textSize = 14f
             setTextColor(muted())
             setPadding(0, dp(8), 0, 0)
@@ -527,6 +556,63 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun profileEditorPanel(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(22), dp(18), dp(22), dp(18))
+        background = roundedBackground(Color.WHITE, dp(26))
+        addView(TextView(context).apply {
+            text = "Edit profile"
+            textSize = 20f
+            setTypeface(null, 1)
+            setTextColor(fg())
+        })
+        val name = EditText(context).apply {
+            hint = "Student name"
+            setText(studentName)
+        }
+        val email = EditText(context).apply {
+            hint = "Email"
+            setText(studentEmail)
+        }
+        val school = EditText(context).apply {
+            hint = "School"
+            setText(studentSchool)
+        }
+        val course = EditText(context).apply {
+            hint = "Course"
+            setText(studentCourse)
+        }
+        val campus = EditText(context).apply {
+            hint = "Campus"
+            setText(studentCampus)
+        }
+        val city = EditText(context).apply {
+            hint = "Campus or city"
+            setText(weatherCity)
+        }
+        val currency = spinnerFor(listOf("EUR", "USD", "GBP", "XOF", "NGN", "CAD"), preferredCurrency)
+        listOf(name, email, school, course, campus, city).forEach { addView(it) }
+        addView(TextView(context).apply {
+            text = "Preferred currency"
+            textSize = 13f
+            setTextColor(muted())
+            setPadding(0, dp(8), 0, 0)
+        })
+        addView(currency)
+        addView(actionButton("Save profile") {
+            studentName = name.text.toString().trim().ifEmpty { "Student" }
+            studentEmail = email.text.toString().trim()
+            studentSchool = school.text.toString().trim()
+            studentCourse = course.text.toString().trim()
+            studentCampus = campus.text.toString().trim().ifEmpty { "Campus" }
+            weatherCity = city.text.toString().trim().ifEmpty { "Campus" }
+            preferredCurrency = selectedSpinnerValue(currency, "EUR")
+            weatherTemp = temperatureForLocation(weatherCity)
+            saveState()
+            render()
+        })
+    }.withMargins()
+
     private fun notificationLeadRow(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         listOf(5, 10, 15, 30).forEach { minutes ->
@@ -562,8 +648,10 @@ class MainActivity : Activity() {
                 .put("school", studentSchool)
                 .put("course", studentCourse)
                 .put("campus", studentCampus)
+                .put("currency", preferredCurrency)
                 .put("location", weatherCity))
             .put("walletBalance", walletBalance)
+            .put("incomes", JSONArray(incomesToJson()))
             .put("schedules", JSONArray(scheduleItemsToJson()))
             .put("reminders", JSONArray(reminderItemsToJson()))
             .put("tasks", JSONArray(tasksToJson()))
@@ -619,7 +707,7 @@ class MainActivity : Activity() {
             setPadding(28, 8, 28, 0)
         }
         val name = EditText(this).apply { hint = "Expense name" }
-        val category = EditText(this).apply { hint = "Category, e.g. Food" }
+        val category = spinnerFor(expenseCategories, "General")
         val amount = EditText(this).apply {
             hint = "Amount, e.g. 4.50"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -633,7 +721,7 @@ class MainActivity : Activity() {
             .setPositiveButton("Save") { _, _ ->
                 val parsed = amount.text.toString().toDoubleOrNull()
                 if (name.text.isNotBlank() && parsed != null) {
-                    expenses.add(Expense(name.text.toString(), parsed, category.text.toString().trim().ifEmpty { "General" }))
+                    expenses.add(Expense(name.text.toString(), parsed, selectedSpinnerValue(category, "General")))
                     saveState()
                     render()
                 }
@@ -652,10 +740,7 @@ class MainActivity : Activity() {
             hint = "Expense name"
             setText(expense.name)
         }
-        val category = EditText(this).apply {
-            hint = "Category"
-            setText(expense.category)
-        }
+        val category = spinnerFor(expenseCategories, expense.category)
         val amount = EditText(this).apply {
             hint = "Amount, e.g. 4.50"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -670,7 +755,7 @@ class MainActivity : Activity() {
             .setPositiveButton("Save") { _, _ ->
                 val parsed = amount.text.toString().toDoubleOrNull()
                 if (name.text.isNotBlank() && parsed != null) {
-                    expenses[index] = Expense(name.text.toString(), parsed, category.text.toString().trim().ifEmpty { "General" })
+                    expenses[index] = Expense(name.text.toString(), parsed, selectedSpinnerValue(category, "General"))
                     saveState()
                     render()
                 }
@@ -686,16 +771,31 @@ class MainActivity : Activity() {
     }
 
     private fun addIncomeDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 8, 28, 0)
+        }
+        val type = spinnerFor(incomeTypes, "Allowance")
+        val note = EditText(this).apply { hint = "Note, e.g. May allowance" }
         val input = EditText(this).apply {
             hint = "Income amount, e.g. 100"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
+        layout.addView(TextView(this).apply {
+            text = "Income type"
+            textSize = 13f
+            setTextColor(muted())
+            setPadding(0, 0, 0, dp(4))
+        })
+        layout.addView(type)
+        layout.addView(note)
+        layout.addView(input)
         AlertDialog.Builder(this)
             .setTitle("Add income")
-            .setView(input)
+            .setView(layout)
             .setPositiveButton("Save") { _, _ ->
                 input.text.toString().toDoubleOrNull()?.let {
-                    walletBalance += it
+                    incomes.add(0, Income(it, selectedSpinnerValue(type, "Income"), note.text.toString().trim(), System.currentTimeMillis()))
                     saveState()
                     render()
                 }
@@ -704,15 +804,58 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun editIncomeDialog(index: Int) {
+        val income = incomes[index]
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 8, 28, 0)
+        }
+        val type = spinnerFor(incomeTypes, income.type)
+        val note = EditText(this).apply {
+            hint = "Note"
+            setText(income.note)
+        }
+        val input = EditText(this).apply {
+            hint = "Income amount, e.g. 100"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(income.amount.toString())
+        }
+        layout.addView(type)
+        layout.addView(note)
+        layout.addView(input)
+        AlertDialog.Builder(this)
+            .setTitle("Edit income")
+            .setView(layout)
+            .setPositiveButton("Save") { _, _ ->
+                input.text.toString().toDoubleOrNull()?.let {
+                    incomes[index] = income.copy(
+                        amount = it,
+                        type = selectedSpinnerValue(type, "Income"),
+                        note = note.text.toString().trim()
+                    )
+                    saveState()
+                    render()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteIncome(index: Int) {
+        incomes.removeAt(index)
+        saveState()
+        render()
+    }
+
     private fun setBalanceDialog() {
         val input = EditText(this).apply {
-            hint = "Balance, e.g. 450"
+            hint = "Starting balance, e.g. 450"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             setText(walletBalance.toString())
             setSelection(text.length)
         }
         AlertDialog.Builder(this)
-            .setTitle("Set wallet balance")
+            .setTitle("Set starting balance")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 input.text.toString().toDoubleOrNull()?.let {
@@ -1116,6 +1259,76 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun dashboardShortcuts(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        val nextClass = scheduleItems
+            .filter { it.startTimeMillis >= System.currentTimeMillis() }
+            .minByOrNull { it.startTimeMillis }
+        val todaysReminder = reminderItems
+            .filter { isSameSelectedDay(it.startTimeMillis) }
+            .minByOrNull { it.startTimeMillis }
+        val recentTransaction = (incomes.map {
+            "Income: ${it.type} ${money(it.amount)}"
+        } + expenses.map {
+            "Expense: ${it.category} ${money(it.amount)}"
+        }).firstOrNull()
+        listOf(
+            Triple("Next class", nextClass?.let { "${timeFormat.format(Date(it.startTimeMillis))} ${it.title}" } ?: "Add your first class", pastelGreen()),
+            Triple("Today", todaysReminder?.title ?: "No reminders today", pastelLavender()),
+            Triple("Balance", money(currentBalance()), pastelYellow()),
+            Triple("Recent", recentTransaction ?: "No transactions yet", pastelBlue())
+        ).chunked(2).forEach { row ->
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                row.forEachIndexed { index, item ->
+                    addView(shortcutCard(item.first, item.second, item.third), LinearLayout.LayoutParams(0, dp(116), 1f).apply {
+                        setMargins(if (index == 0) 0 else dp(6), 0, if (index == 0) dp(6) else 0, dp(12))
+                    })
+                }
+            })
+        }
+    }
+
+    private fun shortcutCard(title: String, value: String, color: Int): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        background = roundedBackground(color, dp(22))
+        addView(TextView(context).apply {
+            text = title
+            textSize = 12f
+            setTypeface(null, 1)
+            setTextColor(muted())
+        })
+        addView(TextView(context).apply {
+            text = value
+            textSize = 17f
+            setTypeface(null, 1)
+            setTextColor(fg())
+            setPadding(0, dp(8), 0, 0)
+            maxLines = 2
+        })
+    }
+
+    private fun emptyStateCard(title: String, message: String, actionLabel: String, action: () -> Unit): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(22), dp(18), dp(22), dp(18))
+        background = roundedStrokeBackground(Color.WHITE, Color.rgb(226, 226, 226), dp(24), dp(1))
+        addView(TextView(context).apply {
+            text = title
+            textSize = 20f
+            setTypeface(null, 1)
+            setTextColor(fg())
+        })
+        addView(TextView(context).apply {
+            text = message
+            textSize = 14f
+            setTextColor(muted())
+            setPadding(0, dp(6), 0, dp(12))
+        })
+        addView(actionPill(actionLabel, action), LinearLayout.LayoutParams(-1, dp(50)))
+    }.withMargins()
+
     private fun walletCard(spent: Double): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(24), dp(22), dp(24), dp(22))
@@ -1127,24 +1340,87 @@ class MainActivity : Activity() {
             setTextColor(Color.rgb(44, 82, 130))
         })
         addView(TextView(context).apply {
-            text = money(walletBalance - spent)
+            text = money(currentBalance())
             textSize = 34f
             setTypeface(null, 1)
             setTextColor(fg())
             setPadding(0, dp(8), 0, 0)
         })
         addView(TextView(context).apply {
-            text = "Balance after ${money(spent)} spending"
+            text = "${money(totalIncome())} income - ${money(spent)} expenses"
             textSize = 14f
             setTextColor(muted())
             setPadding(0, dp(4), 0, dp(16))
         })
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(metricCard("Balance", money(walletBalance), pastelGreen()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(7), 0) })
+            addView(metricCard("Income", money(totalIncome()), pastelGreen()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(7), 0) })
             addView(metricCard("Spent", money(spent), pastelCoral()), LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(7), 0, 0, 0) })
         })
     }.withMargins()
+
+    private fun financeChartsCard(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(22), dp(18), dp(22), dp(18))
+        background = roundedBackground(Color.WHITE, dp(26))
+        addView(TextView(context).apply {
+            text = "Money charts"
+            textSize = 20f
+            setTypeface(null, 1)
+            setTextColor(fg())
+        })
+        val categories = expenses.groupBy { it.category }.mapValues { entry -> entry.value.sumOf { it.amount } }
+        if (categories.isEmpty() && incomes.isEmpty()) {
+            addView(TextView(context).apply {
+                text = "Add income or expenses to see category and cashflow charts."
+                textSize = 14f
+                setTextColor(muted())
+                setPadding(0, dp(8), 0, 0)
+            })
+            return@apply
+        }
+        addView(TextView(context).apply {
+            text = "Cashflow"
+            textSize = 15f
+            setTypeface(null, 1)
+            setTextColor(fg())
+            setPadding(0, dp(14), 0, dp(6))
+        })
+        val spent = expenses.sumOf { it.amount }
+        val maxCash = listOf(totalIncome(), spent, kotlin.math.abs(currentBalance())).maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
+        addView(chartBar("Income", totalIncome(), maxCash, pastelGreen()))
+        addView(chartBar("Expenses", spent, maxCash, pastelCoral()))
+        addView(chartBar("Balance", currentBalance(), maxCash, pastelYellow()))
+        if (categories.isNotEmpty()) {
+            addView(TextView(context).apply {
+                text = "Categories"
+                textSize = 15f
+                setTypeface(null, 1)
+                setTextColor(fg())
+                setPadding(0, dp(16), 0, dp(6))
+            })
+            val maxCategory = categories.values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
+            categories.forEach { (category, amount) ->
+                addView(chartBar(category, amount, maxCategory, chartColors()[categories.keys.indexOf(category) % chartColors().size]))
+            }
+        }
+    }.withMargins()
+
+    private fun chartBar(label: String, amount: Double, maxAmount: Double, color: Int): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(5), 0, dp(5))
+        addView(TextView(context).apply {
+            text = "$label  ${money(amount)}"
+            textSize = 13f
+            setTextColor(fg())
+        })
+        addView(FrameLayout(context).apply {
+            background = roundedBackground(Color.rgb(238, 238, 238), dp(8))
+            addView(View(context).apply {
+                background = roundedBackground(color, dp(8))
+            }, FrameLayout.LayoutParams(((amount.coerceAtLeast(0.0) / maxAmount) * dp(260)).toInt().coerceAtLeast(dp(8)), dp(14)))
+        }, LinearLayout.LayoutParams(-1, dp(14)).apply { setMargins(0, dp(4), 0, 0) })
+    }
 
     private fun spendingChartCard(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -1199,7 +1475,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(14), 0, 0)
             addView(mapTile("Search", "Find places") { openMapSearch("student services near me") }, LinearLayout.LayoutParams(0, dp(112), 1f).apply { setMargins(0, 0, dp(8), 0) })
-            addView(mapTile("Change city", weatherCity) { editProfileDialog() }, LinearLayout.LayoutParams(0, dp(112), 1f).apply { setMargins(dp(8), 0, 0, 0) })
+            addView(mapTile("Change city", weatherCity) {
+                activeTab = "Settings"
+                render()
+            }, LinearLayout.LayoutParams(0, dp(112), 1f).apply { setMargins(dp(8), 0, 0, 0) })
         })
     }.withMargins()
 
@@ -1446,13 +1725,33 @@ class MainActivity : Activity() {
         setOnClickListener { action() }
     }
 
+    private fun spinnerFor(options: List<String>, selectedValue: String): Spinner {
+        val normalizedOptions = if (selectedValue.isNotBlank() && selectedValue !in options) {
+            options + selectedValue
+        } else {
+            options
+        }
+        return Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                normalizedOptions
+            )
+            setSelection(normalizedOptions.indexOf(selectedValue).takeIf { it >= 0 } ?: 0)
+        }
+    }
+
+    private fun selectedSpinnerValue(spinner: Spinner, fallback: String): String {
+        return spinner.selectedItem?.toString()?.trim()?.ifEmpty { fallback } ?: fallback
+    }
+
     private fun View.withMargins(): View {
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) }
         return this
     }
 
     private fun View.withNavMargins(): View {
-        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(18), 0, dp(18), dp(16)) }
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(18), 0, dp(18), dp(14)) }
         return this
     }
 
@@ -1520,7 +1819,15 @@ class MainActivity : Activity() {
 
     private fun formatReminder(item: ReminderItem): String = "${item.title}\n${dateTimeFormat.format(Date(item.startTimeMillis))}"
 
-    private fun money(value: Double): String = NumberFormat.getCurrencyInstance(Locale.FRANCE).format(value)
+    private fun totalIncome(): Double = walletBalance + incomes.sumOf { it.amount }
+
+    private fun currentBalance(): Double = totalIncome() - expenses.sumOf { it.amount }
+
+    private fun money(value: Double): String {
+        return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+            currency = Currency.getInstance(preferredCurrency)
+        }.format(value)
+    }
 
     private fun bg(): Int = if (darkMode) Color.rgb(18, 24, 38) else Color.rgb(250, 246, 235)
 
@@ -1543,6 +1850,16 @@ class MainActivity : Activity() {
     private fun pastelBlue(): Int = if (darkMode) Color.rgb(45, 66, 86) else Color.rgb(194, 213, 240)
 
     private fun pastelCoral(): Int = if (darkMode) Color.rgb(91, 51, 58) else Color.rgb(247, 169, 171)
+
+    private fun chartColors(): List<Int> = listOf(
+        pastelGreen(),
+        pastelCoral(),
+        pastelYellow(),
+        pastelBlue(),
+        pastelLavender(),
+        pastelPink(),
+        Color.rgb(210, 210, 210)
+    )
 
     private fun cardColorFor(label: String): Int = when {
         darkMode -> card()
@@ -1592,6 +1909,7 @@ class MainActivity : Activity() {
         studentSchool = prefs.getString("studentSchool", studentSchool) ?: studentSchool
         studentCourse = prefs.getString("studentCourse", studentCourse) ?: studentCourse
         studentCampus = prefs.getString("studentCampus", studentCampus) ?: studentCampus
+        preferredCurrency = prefs.getString("preferredCurrency", preferredCurrency) ?: preferredCurrency
         notificationsEnabled = prefs.getBoolean("notificationsEnabled", notificationsEnabled)
         notificationLeadMinutes = prefs.getInt("notificationLeadMinutes", notificationLeadMinutes)
         weatherCity = prefs.getString("weatherCity", weatherCity) ?: weatherCity
@@ -1601,15 +1919,18 @@ class MainActivity : Activity() {
         val savedSchedules = database.scheduleDao().getAll()
         val savedReminders = database.reminderDao().getAll()
         val savedExpenses = database.expenseDao().getAll()
-        if (savedSchedules.isNotEmpty() || savedReminders.isNotEmpty() || savedExpenses.isNotEmpty()) {
+        val savedIncomes = database.incomeDao().getAll()
+        if (savedSchedules.isNotEmpty() || savedReminders.isNotEmpty() || savedExpenses.isNotEmpty() || savedIncomes.isNotEmpty()) {
             replaceScheduleItems(savedSchedules)
             replaceReminderItems(savedReminders)
             replaceExpenses(savedExpenses)
+            replaceIncomes(savedIncomes)
             return
         }
         prefs.getString("classes", null)?.let { replaceScheduleItems(it) }
         prefs.getString("reminders", null)?.let { replaceReminderItems(it) }
         prefs.getString("expenses", null)?.let { replaceExpenses(it) }
+        prefs.getString("incomes", null)?.let { replaceIncomes(it) }
     }
 
     private fun saveState() {
@@ -1623,6 +1944,7 @@ class MainActivity : Activity() {
             .putString("studentSchool", studentSchool)
             .putString("studentCourse", studentCourse)
             .putString("studentCampus", studentCampus)
+            .putString("preferredCurrency", preferredCurrency)
             .putBoolean("notificationsEnabled", notificationsEnabled)
             .putInt("notificationLeadMinutes", notificationLeadMinutes)
             .putString("weatherCity", weatherCity)
@@ -1632,6 +1954,7 @@ class MainActivity : Activity() {
             .putString("tasks", tasksToJson())
             .putString("reminders", reminderItemsToJson())
             .putString("expenses", expensesToJson())
+            .putString("incomes", incomesToJson())
             .apply()
         saveRecordsToDatabase()
     }
@@ -1644,6 +1967,8 @@ class MainActivity : Activity() {
             database.reminderDao().insertAll(reminderItems.map { ReminderEntity(it.id, it.title, it.startTimeMillis) })
             database.expenseDao().deleteAll()
             database.expenseDao().insertAll(expenses.map { ExpenseEntity(name = it.name, amount = it.amount, category = it.category) })
+            database.incomeDao().deleteAll()
+            database.incomeDao().insertAll(incomes.map { IncomeEntity(amount = it.amount, type = it.type, note = it.note, createdAtMillis = it.createdAtMillis) })
         }
     }
 
@@ -1724,6 +2049,27 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun replaceIncomes(json: String) {
+        incomes.clear()
+        val values = JSONArray(json)
+        for (index in 0 until values.length()) {
+            val income = values.getJSONObject(index)
+            incomes.add(Income(
+                income.getDouble("amount"),
+                income.optString("type", "Income"),
+                income.optString("note", ""),
+                income.optLong("createdAtMillis", System.currentTimeMillis())
+            ))
+        }
+    }
+
+    private fun replaceIncomes(items: List<IncomeEntity>) {
+        incomes.clear()
+        items.forEach {
+            incomes.add(Income(it.amount, it.type, it.note, it.createdAtMillis))
+        }
+    }
+
     private fun tasksToJson(): String {
         val json = JSONArray()
         tasks.forEach {
@@ -1752,6 +2098,18 @@ class MainActivity : Activity() {
         val json = JSONArray()
         expenses.forEach {
             json.put(JSONObject().put("name", it.name).put("amount", it.amount).put("category", it.category))
+        }
+        return json.toString()
+    }
+
+    private fun incomesToJson(): String {
+        val json = JSONArray()
+        incomes.forEach {
+            json.put(JSONObject()
+                .put("amount", it.amount)
+                .put("type", it.type)
+                .put("note", it.note)
+                .put("createdAtMillis", it.createdAtMillis))
         }
         return json.toString()
     }
@@ -1804,6 +2162,8 @@ class MainActivity : Activity() {
     data class ReminderItem(val id: Long, val title: String, val startTimeMillis: Long)
 
     data class Expense(val name: String, val amount: Double, val category: String = "General")
+
+    data class Income(val amount: Double, val type: String = "Income", val note: String = "", val createdAtMillis: Long = System.currentTimeMillis())
 
     data class PlanTile(val title: String, val time: String, val label: String, val detail: String, val color: Int)
 

@@ -33,6 +33,15 @@ data class ExpenseEntity(
     val category: String = "General"
 )
 
+@Entity(tableName = "incomes")
+data class IncomeEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val amount: Double,
+    val type: String = "Income",
+    val note: String = "",
+    val createdAtMillis: Long = System.currentTimeMillis()
+)
+
 @Dao
 interface ScheduleDao {
     @Query("SELECT * FROM schedules ORDER BY startTimeMillis ASC")
@@ -69,15 +78,28 @@ interface ExpenseDao {
     fun insertAll(items: List<ExpenseEntity>)
 }
 
+@Dao
+interface IncomeDao {
+    @Query("SELECT * FROM incomes ORDER BY createdAtMillis DESC")
+    fun getAll(): List<IncomeEntity>
+
+    @Query("DELETE FROM incomes")
+    fun deleteAll()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertAll(items: List<IncomeEntity>)
+}
+
 @Database(
-    entities = [ScheduleEntity::class, ReminderEntity::class, ExpenseEntity::class],
-    version = 2,
+    entities = [ScheduleEntity::class, ReminderEntity::class, ExpenseEntity::class, IncomeEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun scheduleDao(): ScheduleDao
     abstract fun reminderDao(): ReminderDao
     abstract fun expenseDao(): ExpenseDao
+    abstract fun incomeDao(): IncomeDao
 
     companion object {
         @Volatile
