@@ -1,4 +1,5 @@
 # StudentUtilityHub
+![GitHub Cards Preview](https://github.com/asrieldev/SUB/blob/main/image1.jpeg)
 
 StudentUtilityHub is a Kotlin Android prototype for students who need one place to manage classes, tasks, expenses, reminders, and nearby services.
 
@@ -34,3 +35,6 @@ StudentUtilityHub is a Kotlin Android prototype for students who need one place 
 - Add Firebase Authentication and Firestore sync.
 - Add Google Sign-In and direct Google Calendar API sync with a Google Cloud OAuth client.
 - Optionally replace osmdroid with Google Maps SDK after a Google Maps API key is available.
+
+
+
