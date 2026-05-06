@@ -1,5 +1,5 @@
 # StudentUtilityHub
-![GitHub Cards Preview](https://github.com/asrieldev/SUB/blob/main/image1.jpeg)
+![GitHub Cards Preview](https://github.com/asrieldev/SUB/blob/main/miscellaneous/Poster.png)
 
 StudentUtilityHub is a Kotlin Android prototype for students who need one place to manage classes, tasks, expenses, reminders, and nearby services.
 
