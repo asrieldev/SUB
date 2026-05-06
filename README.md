@@ -7,7 +7,7 @@ StudentUtilityHub is a Kotlin Android prototype for students who need one place 
 
 1. Open Android Studio.
 2. Choose **Open**.
-3. Select `C:\Users\MrRobot\AndroidStudioProjects\StudentUtilityHub`.
+3. Select folder path.
 4. Let Gradle sync finish.
 5. Run the `app` configuration on an emulator or Android phone.
 
